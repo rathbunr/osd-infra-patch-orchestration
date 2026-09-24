@@ -1,0 +1,15 @@
+---
+# Collections for Lab Patch Orchestration (POC)
+# Install with: ansible-galaxy collection install -r requirements.yml
+# Pin versions for reproducibility; update deliberately.
+
+collections:
+  - name: redhat.satellite
+    version: ">=5.0.0"          # Satellite 6.19 compatible; verify exact version in lab
+  - name: servicenow.itsm
+    version: ">=2.0.0"          # Change Request, incident, CI modules
+  - name: ansible.windows
+    version: ">=2.0.0"          # win_updates, win_powershell, etc.
+  - name: community.general
+    version: ">=8.0.0"          # Utility modules as needed
+  # Add network/device collections only after inventory confirms models and support status

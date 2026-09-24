@@ -1,0 +1,31 @@
+# Secrets and credentials – never commit
+*.vault
+*vault*
+credentials/
+*.pem
+*.key
+.env
+.env.*
+
+# Ansible runtime
+*.retry
+.ansible/
+collections/
+!collections/.gitkeep
+
+# Local evidence that may contain sensitive data (keep templates only)
+evidence/raw/
+evidence/runs/
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# Python / tooling
+__pycache__/
+*.pyc
+.venv/
+venv/
