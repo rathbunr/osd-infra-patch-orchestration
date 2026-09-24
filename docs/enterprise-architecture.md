@@ -6,6 +6,8 @@
 
 **Status:** Design document. No implementation until reviewed and approved.
 
+**Document version:** 1.1 — ITIL 4–aligned enterprise approach.
+
 ---
 
 ## 1. Problem Statement
@@ -13,12 +15,12 @@
 “Is it patched?” is not a binary question. It is the intersection of:
 
 1. **Feed / Advisory** — What did the vendor publish?
-2. **Inventory** — What do we claim to have?
+2. **Inventory** — What do we claim to have? (configuration items / assets)
 3. **Actual state** — What is really present on the host right now?
 4. **Desired state** — What have we decided must be present?
 5. **Remediation capability** — Can this host/tier be patched automatically, semi-automatically, or only manually?
 
-Scanning is relatively uniform. Patching is not. The architecture must treat scanning as the common verification layer and treat patching as a routed capability.
+Scanning is relatively uniform. Patching is not. The architecture treats scanning as the common verification layer and patching as a routed capability, consistent with ITIL 4’s risk-based change enablement rather than a single rigid process.
 
 ---
 
@@ -35,153 +37,231 @@ The same advisory may take different paths for different hosts or tiers inside o
 
 ---
 
-## 3. Conceptual Model
+## 3. Conceptual Model (ITIL-aligned)
 
 ```mermaid
 flowchart TB
-    subgraph Sources["External & Local Inputs"]
-        Feed["Vendor Feeds\n(RH CSAF/VEX, MSRC CVRF/CSAF, NVD, …)"]
-        Inv["Inventory\n(CMDB, Satellite, Hyper-V, static)"]
-        Desired["Desired State\n(versioned baseline)"]
+    subgraph Demand["Demand / Trigger"]
+        Feed["Vendor Feeds & Advisories\n(Information Security / Risk input)"]
+        Mon["Monitoring & Event / Scan results"]
+        Prob["Problem / Known Error\n(optional escalation)"]
     end
 
-    subgraph Verify["Verification Layer (ubiquitous)"]
-        Scan["Vulnerability Scan / Targeted Check\n(Nessus, Satellite errata, win_updates, agent, manual import)"]
-        Actual["Actual State"]
+    subgraph Assess["Assess & Classify (Change Enablement)"]
+        Inv["Inventory / CMS\n(CIs, relationships)"]
+        Desired["Desired State\n(accepted baseline)"]
+        Gap["Gap Detection\n(relevant + outstanding)"]
+        Classify["Change type\nStandard | Normal | Emergency"]
     end
 
-    subgraph Decide["Decision & Routing"]
-        Gap["Gap Detection\n(Desired vs Actual + Feed relevance)"]
-        Router["Capability Router"]
+    subgraph Authorize["Authorize (Change Authority)"]
+        Router["Capability Router\n+ Change Authority policy"]
     end
 
-    subgraph Act["Remediation Paths"]
-        Auto["A – Automated Remediation"]
-        Semi["B – Ticket + Orchestrated / Approved Work"]
-        Manual["C/D – Ticket + Manual Work"]
+    subgraph Realize["Realize (Deployment + Validation)"]
+        Auto["Standard / pre-approved path\nAutomated remediation"]
+        Semi["Normal path\nApproved + orchestrated"]
+        Manual["Normal or Emergency path\nManual / air-gap work"]
+        Deploy["Deployment Management\n(execute change)"]
+        Validate["Service Validation & Testing\nRe-verify actual state"]
     end
 
-    subgraph Record["Record & Close"]
-        Ticket["Dynamic Change / Incident Record\n(open while gap exists)"]
+    subgraph Close["Review & Close"]
+        Ticket["Change Record\n(living while gap exists)"]
+        PIR["Change review / PIR\n+ Continual Improvement"]
         Evidence["Evidence Store"]
-        Close["Re-verify → Close / Resolve"]
     end
 
     Feed --> Gap
+    Mon --> Gap
+    Prob --> Gap
     Inv --> Gap
     Desired --> Gap
-    Scan --> Actual
-    Actual --> Gap
-    Gap --> Router
+    Gap --> Classify
+    Classify --> Router
     Router --> Auto
     Router --> Semi
     Router --> Manual
-    Auto --> Ticket
-    Semi --> Ticket
-    Manual --> Ticket
+    Auto --> Deploy
+    Semi --> Deploy
+    Manual --> Deploy
+    Deploy --> Validate
+    Validate --> Ticket
+    Validate --> PIR
     Ticket --> Evidence
-    Auto --> Close
-    Semi --> Close
-    Manual --> Close
-    Close --> Ticket
+    PIR --> Evidence
 ```
 
----
-
-## 4. End-to-End Workflow
-
-### 4.1 Common front end (all tiers)
-
-1. **Feed ingest** (or manual advisory import for air-gap)
-   - Normalize to common identifiers: CVE, RHSA/RHBA, KB, severity, products, packages, reboot flag, publication date.
-2. **Inventory filter**
-   - Does any managed asset potentially match the product/version/CPE?
-3. **Targeted verification**
-   - Drive scanner or native check with the specific CVE/advisory list (feed = “what”; scanner = “verify”).
-   - Sources of actual state: Nessus (plugin/CVE-targeted), Satellite `host_errata_info`, `win_updates` search, agent results, or manually imported scan files.
-4. **Gap calculation**
-   - Desired state vs actual state, constrained by feed relevance and inventory.
-   - Output: clear gap record (host, advisory, sub-state, evidence pointers).
-
-### 4.2 Capability router
-
-After a gap is confirmed, route by host/tier capability tag:
-
-| Capability tag | Action |
-|----------------|--------|
-| `patch:auto` | Attempt automated remediation (within policy and maintenance window). Re-verify. Close on success. |
-| `patch:approved-auto` | Open/update change record, require explicit approval, then automated execution. |
-| `patch:orchestrated` | Open/update change record, assign to automation or operator with runbook; execution may be semi-automated. |
-| `patch:manual` | Open/update change record, assign for manual work; provide clear remediation guidance and evidence requirements. |
-| `patch:airgap` | Open/update change record (or local tracking), package guidance + media requirements; accept manually imported verification results. |
-
-Hosts or groups carry the capability tag in inventory. The router never assumes automation where the tag says otherwise.
-
-### 4.3 Dynamic ticket lifecycle
-
-- **Gap appears** → open or update change/incident record (link advisory, hosts, evidence, capability path).
-- **Gap remains** → record stays open; updates append evidence and status.
-- **Gap closed and re-verified** → resolve/close record.
-- Ticket is a living reflection of the gap, not a one-shot request.
-
-### 4.4 Re-verification (mandatory on all paths)
-
-After any remediation attempt (auto or manual), re-run the same verification method. Only successful re-verification closes the gap and the record.
+**ITIL mapping (high level):** Demand is often driven by Information Security Management and Monitoring & Event Management; assessment and authorization sit in Change Enablement; execution aligns with Deployment Management; confirmation aligns with Service Validation and Testing; learning feeds Continual Improvement. Problem Management may own systemic vulnerability themes; individual remediation of a known gap is typically a **change**, not an incident (unless service is already impaired).
 
 ---
 
-## 5. Tier-Specific Patterns
+## 4. ITIL 4 Alignment and Verification
 
-### 5.1 Robust (Tier A)
+### 4.1 Primary practice: Change Enablement
+
+**ITIL 4 purpose (Change Enablement):**  
+*“To maximize the number of successful service and product changes by ensuring that risks have been properly assessed, authorizing changes to proceed, and managing the change schedule.”*  
+— AXELOS, *ITIL 4 Change Enablement Practice Guide* / ITIL 4 Foundation practice statements.
+
+**Change lifecycle management activities** (ITIL 4 practice guidance) map as follows:
+
+| ITIL 4 activity | This architecture |
+|-----------------|-------------------|
+| Change registration | Gap record + open/update change record when gap is confirmed |
+| Change assessment | Feed relevance + inventory + actual state + risk/severity + capability tag |
+| Change authorization | Capability router + designated Change Authority (policy, peer, CAB, or automated pre-approval) |
+| Change planning | Maintenance window, wave order, recovery path, schedule conflict check |
+| Change realization control | Remediation execution (auto or manual) under the chosen path |
+| Change review and closure | Mandatory re-verification + post-implementation review (PIR) inputs; close only when gap is cleared |
+
+**Change types (ITIL 4)** — required alignment:
+
+| ITIL type | Definition (summary) | Mapping in this architecture |
+|-----------|----------------------|------------------------------|
+| **Standard** | Pre-authorized, low-risk, well-understood, often automated; follows a documented procedure | `patch:auto` where the specific remediation is pre-approved as a standard change model (e.g., pilot CV, known KB set, documented runbook). No per-instance CAB. |
+| **Normal** | Not standard and not emergency; requires assessment and authorization appropriate to risk | `patch:approved-auto`, `patch:orchestrated`, `patch:manual` — change record, risk assessment, Change Authority approval, then realization |
+| **Emergency** | Must be implemented as soon as possible (e.g., critical security exposure or major incident) | High-severity gaps with expedited Change Authority (or ECAB-equivalent); still documented; post-implementation review required. May still be auto or manual depending on capability tag. |
+
+**Findings and corrections applied in v1.1:**
+
+1. **Change type was implicit; now explicit.** Capability tags alone are operational routing; ITIL requires classifying Standard / Normal / Emergency. The router now combines *capability* (can we automate?) with *change type* (what governance applies?).
+2. **Change Authority was underspecified.** Authorization is not “the ticket system”; it is a defined person/group/policy (including automated authorization for Standard changes). Diagram and router updated.
+3. **Review & closure needed PIR linkage.** Re-verify closes the *gap*; change review / PIR feeds Continual Improvement and may update standard-change models or desired state. Added to model.
+4. **Incident vs Change vs Problem clarified.** A detected vulnerability gap is not automatically an Incident (no service impairment assumed). It is typically a candidate Change. Recurring or systemic issues may be managed as Problems/Known Errors that *trigger* changes. Security events may raise Incidents *and* drive emergency changes.
+
+### 4.2 Related ITIL 4 practices
+
+| Practice | Purpose (summary) | Role in this architecture |
+|----------|-------------------|---------------------------|
+| **Information Security Management** | Protect information needed by the organization (confidentiality, integrity, availability) | Primary source of vulnerability/advisory demand; severity and risk context |
+| **Monitoring and Event Management** | Systematically observe services and components; record and manage selected events | Scan results, errata applicability, agent events as triggers and actual-state inputs |
+| **Service Configuration Management** | Ensure accurate, reliable information about CIs and relationships | Inventory / CMS used in applicability filtering and impact assessment |
+| **IT Asset Management** | Lifecycle of IT assets | Complements inventory for ownership and support status |
+| **Deployment Management** | Move new or changed components to live (or other) environments | Remediation execution engines (Satellite, MECM, Ansible, manual install) |
+| **Release Management** | Make new and changed services/features available for use | Optional packaging of patch waves as releases where the organization uses release constructs |
+| **Service Validation and Testing** | Ensure products and services meet agreed requirements | Mandatory re-verification after realization; “patched” definition |
+| **Incident Management** | Minimize impact of incidents; restore normal operation | Only when vulnerability is actively impairing service or is exploited |
+| **Problem Management** | Reduce likelihood/impact of incidents by managing causes, workarounds, known errors | Systemic vulnerability themes, repeated gaps, root-cause beyond a single advisory |
+| **Continual Improvement** | Align practices and services with changing needs | PIR outcomes, standard-change model updates, desired-state evolution |
+| **Risk Management** | (General management) | Informs severity handling and emergency vs normal classification |
+
+Sources for practice purposes: AXELOS ITIL 4 Foundation and practice guides (Change Enablement, and the standard purpose statements for the practices listed above).
+
+### 4.3 Service Value Chain contribution
+
+Change Enablement (and this architecture) contributes primarily to:
+
+- **Obtain/build** — implementing the fix  
+- **Design and transition** — controlled introduction of change  
+- **Deliver and support** — protecting live services  
+- **Improve** — reducing risk and refining models  
+
+(ITIL 4 Service Value System / Service Value Chain; Change Enablement practice guidance on value stream contribution.)
+
+### 4.4 What remains intentionally outside pure ITIL process language
+
+- **Feed-driven targeted scanning** is a technical pattern that *feeds* Monitoring & Event and Information Security inputs; ITIL does not prescribe Nessus/CSAF mechanics.
+- **Air-gap and austere tiers** are operational constraints; ITIL still expects registration, authorization (even if local), realization control, and review — which this design preserves with manual evidence.
+- **Desired state** is an engineering control aligned with configuration baselines; formal CI attribute updates remain a Service Configuration Management concern.
+
+---
+
+## 5. End-to-End Workflow
+
+### 5.1 Common front end (all tiers)
+
+1. **Feed ingest** (or manual advisory import for air-gap)  
+   - Normalize: CVE, RHSA/RHBA, KB, severity, products, packages, reboot flag, publication date.
+2. **Inventory / CMS filter**  
+   - Match product/version/CPE to configuration items.
+3. **Targeted verification (actual state)**  
+   - Feed supplies the *what*; scanner or native check supplies *is it present*.  
+   - Nessus (CVE/plugin-targeted), Satellite `host_errata_info`, `win_updates`, agents, or imported scan files.
+4. **Gap calculation**  
+   - Desired vs actual, constrained by relevance.  
+   - Output: gap record (hosts, advisory, sub-state, evidence).
+5. **Classify change type**  
+   - Standard / Normal / Emergency per policy (severity, exploitability, service impact, pre-approved model match).
+6. **Authorize via Change Authority + capability router**  
+   - Combine change type with capability tag (`patch:auto` … `patch:airgap`).
+
+### 5.2 Capability router (operational) × Change type (governance)
+
+| Capability tag | Typical ITIL change type | Action |
+|----------------|--------------------------|--------|
+| `patch:auto` | **Standard** (only if model is pre-approved) | Automated remediation in window; record for schedule/audit; re-verify; close |
+| `patch:approved-auto` | **Normal** (or Emergency if expedited) | Change record + Change Authority approval → automated execution → re-verify |
+| `patch:orchestrated` | **Normal** | Change record + runbook / semi-automated realization → re-verify |
+| `patch:manual` | **Normal** (or Emergency) | Change record + assigned manual work + evidence requirements → re-verify |
+| `patch:airgap` | **Normal** or **Emergency** (local authority) | Local/replicated record; manual realization; imported verification evidence |
+
+**Rule:** Automation never bypasses Standard-change pre-approval rules. A `patch:auto` host still requires that *this class of remediation* is an accepted standard change; otherwise treat as Normal.
+
+### 5.3 Dynamic change record lifecycle
+
+- Gap confirmed → register/update **change record** (link advisory, CIs, risk, type, authority, evidence).
+- Gap remains → record stays active; append status and evidence.
+- Realization attempted → update record.
+- Re-verification succeeds → close change; trigger light **change review** / PIR inputs where policy requires (especially Normal and Emergency).
+- Record is a living reflection of the gap and the change, not a one-shot request.
+
+### 5.4 Re-verification (mandatory)
+
+Aligns with **Service Validation and Testing** and Change Enablement “review and closure.”  
+After any realization path, re-run verification. Only successful re-verification clears the gap and closes the change.
+
+---
+
+## 6. Tier-Specific Patterns
+
+### 6.1 Robust (Tier A)
 
 ```mermaid
 sequenceDiagram
     participant Feed
     participant Orch as Orchestrator
-    participant Scan as Scanner / Native Check
-    participant Patch as Patch Engine
-    participant Ticket as ITSM
+    participant Scan as Verification
+    participant CA as Change Authority
+    participant Patch as Deployment
+    participant Ticket as Change Record
     participant Evid as Evidence
 
-    Feed->>Orch: New advisory (CVE/RHSA/KB)
-    Orch->>Orch: Inventory filter
-    Orch->>Scan: Targeted verify (these CVEs)
+    Feed->>Orch: Advisory (CVE/RHSA/KB)
+    Orch->>Orch: Inventory filter + gap vs desired
+    Orch->>Scan: Targeted verify
     Scan->>Orch: Actual state / gap
-    alt Gap and patch:auto
-        Orch->>Ticket: Open/update CR (info)
+    Orch->>Orch: Classify Standard / Normal / Emergency
+    alt Standard + patch:auto
+        Orch->>Ticket: Register standard change (schedule/audit)
         Orch->>Patch: Remediate
         Patch->>Orch: Result
         Orch->>Scan: Re-verify
         Scan->>Orch: Clean
-        Orch->>Ticket: Resolve
+        Orch->>Ticket: Close
         Orch->>Evid: Store evidence
-    else Gap and approval required
-        Orch->>Ticket: Open CR + approval gate
-        Note over Ticket: Human or policy approval
-        Ticket->>Orch: Approved
+    else Normal / Emergency
+        Orch->>Ticket: Register change + risk
+        Orch->>CA: Authorize (expedite if Emergency)
+        CA->>Orch: Authorized
         Orch->>Patch: Remediate
         Orch->>Scan: Re-verify
-        Orch->>Ticket: Resolve
+        Orch->>Ticket: Close + review/PIR inputs
+        Orch->>Evid: Store evidence
     end
 ```
 
-**Typical tools:** Satellite + AAP, MECM + Ansible, `win_updates`, Nessus/Tenable with API-driven targeted scans, ServiceNow (or equivalent).
+### 6.2 Austere (Tier C)
 
-### 5.2 Austere (Tier C)
+Same classification and registration. Realization is manual or limited tooling. Change Authority may be local. Closure still requires verification evidence attached to the change record.
 
-- Same feed → filter → targeted scan path.
-- Router sends gap to ticket with manual assignment and clear remediation steps.
-- Operator performs patch (or uses limited local tooling).
-- Operator or scheduled job imports/triggers re-scan results.
-- Ticket closes only after verification evidence is attached.
-
-### 5.3 Air-gap (Tier D)
+### 6.3 Air-gap (Tier D)
 
 ```mermaid
 flowchart LR
     subgraph Connected["Connected side"]
-        Feed2["Vendor feeds"]
-        Bundle["Advisory + plugin/scan content bundle"]
+        Feed2["Vendor feeds / ISM inputs"]
+        Bundle["Advisory + scan content bundle"]
     end
 
     subgraph Transfer["Controlled transfer"]
@@ -189,115 +269,130 @@ flowchart LR
     end
 
     subgraph Airgap["Air-gapped side"]
-        Import["Import advisories + scan definitions"]
-        ManualScan["Manual or scheduled local scan"]
-        Gap2["Gap list"]
-        Ticket2["Local or replicated ticket"]
-        ManualPatch["Manual remediation"]
-        ReScan["Re-scan + evidence"]
+        Import["Import advisories + definitions"]
+        Verify["Local verification"]
+        Classify2["Classify + local Change Authority"]
+        ChangeRec["Change record"]
+        Realize["Manual realization"]
+        ReVerify["Re-verify + evidence"]
+        Review["Review / PIR inputs"]
     end
 
     Feed2 --> Bundle --> Media --> Import
-    Import --> ManualScan --> Gap2 --> Ticket2
-    Gap2 --> ManualPatch --> ReScan --> Ticket2
+    Import --> Verify --> Classify2 --> ChangeRec
+    Classify2 --> Realize --> ReVerify --> ChangeRec
+    ReVerify --> Review
 ```
 
-- Feeds and (where licensed) scanner plugin updates are bundled on the connected side.
-- Transfer is deliberate and audited.
-- Scanning still occurs; it is just fed by imported content and often initiated manually.
-- Patching is manual; evidence (scan delta, screenshots, logs, signed manifests) is the closure criterion.
+ITIL expectations (register, assess, authorize, realize, review) remain; mechanisms are manual and evidence-centric.
 
 ---
 
-## 6. Data Contracts (minimum)
+## 7. Data Contracts (minimum)
 
-### Gap record (travels with every decision)
+### Gap / change-oriented record
 
 | Field | Purpose |
 |-------|---------|
 | `advisory_id` | CVE / RHSA / KB / vendor ID |
-| `severity` | From feed |
-| `hosts[]` | Affected assets after inventory + actual-state filter |
+| `severity` / risk | From feed + local risk context |
+| `hosts[]` / CI refs | Affected configuration items |
+| `change_type` | `standard` \| `normal` \| `emergency` |
 | `capability_tag` | `patch:auto` … `patch:airgap` |
-| `desired_ref` | Link to desired-state version |
+| `change_authority` | Policy, role, or group that authorized |
+| `desired_ref` | Desired-state version |
 | `actual_evidence` | Scan ID, plugin results, errata status, KB list, import hash |
 | `sub_state` | applicable-not-installed, installed-pending-reboot, installed-unvalidated, etc. |
-| `ticket_id` | Living change/incident record |
-| `remediation_path` | Chosen route |
-| `timestamps` | Detected, remediated, re-verified, closed |
+| `change_record_id` | Living change record |
+| `remediation_path` | Chosen realization path |
+| `timestamps` | Detected, authorized, realized, re-verified, closed, reviewed |
 
 ### Desired state
 
-Versioned, human-reviewable definition of required baselines (errata sets, KB baselines, package levels, config). Updated when the organization deliberately accepts a new standard—not automatically by every feed item.
+Versioned, reviewable baselines. Updated deliberately (often via Continual Improvement or accepted standard-change model changes)—not unilaterally by every feed item.
 
 ---
 
-## 7. Definition of “Patched” (enterprise-usable)
+## 8. Definition of “Patched”
 
-A host is **patched** for a given advisory when all of the following are true:
+A host is **patched** for a given advisory when:
 
-1. The advisory is relevant to the host (feed + inventory).
-2. Actual state shows the fix is present (scan, errata status, or KB inventory).
-3. Required reboot or service restart has completed (where applicable).
-4. A defined validation check succeeds (service health, dependent system check, or accepted residual-risk record).
+1. The advisory is relevant (feed + inventory/CI).  
+2. Actual state shows the fix is present.  
+3. Required reboot/service restart has completed (where applicable).  
+4. Defined validation succeeds (Service Validation and Testing / agreed check), or residual risk is formally accepted.
 
 Anything less remains an open gap with an explicit sub-state.
 
 ---
 
-## 8. Routing Decision Table (summary)
+## 9. Routing Decision Table (summary)
 
-| Gap confirmed? | Capability tag | Approval required? | Action | Closure condition |
-|----------------|----------------|--------------------|--------|-------------------|
-| No | any | — | No ticket (or informational only) | — |
-| Yes | `patch:auto` | Policy-dependent | Auto-remediate | Re-verify clean |
-| Yes | `patch:approved-auto` | Yes | Ticket + approve + auto | Re-verify clean |
-| Yes | `patch:orchestrated` | Usually | Ticket + runbook / semi-auto | Re-verify clean |
-| Yes | `patch:manual` | Yes / assign | Ticket + manual work | Re-verify clean + evidence |
-| Yes | `patch:airgap` | Local process | Local tracking + manual | Imported re-scan evidence |
+| Gap? | Change type | Capability tag | Authorization | Realization | Closure |
+|------|-------------|----------------|---------------|-------------|---------|
+| No | — | any | — | — | — |
+| Yes | Standard | `patch:auto` | Pre-approved model | Auto | Re-verify clean |
+| Yes | Normal | `patch:approved-auto` | Change Authority | Auto after approval | Re-verify + review inputs |
+| Yes | Normal | `patch:orchestrated` / `manual` | Change Authority | Orchestrated or manual | Re-verify + evidence |
+| Yes | Emergency | any viable | Expedited authority | Fastest safe path | Re-verify + mandatory PIR inputs |
+| Yes | any | `patch:airgap` | Local authority | Manual | Imported re-verify evidence |
 
 ---
 
-## 9. Tooling Mapping (illustrative)
+## 10. Tooling Mapping (illustrative)
 
 | Function | Robust | Austere | Air-gap |
 |----------|--------|---------|---------|
-| Feed ingest | RH Security Data / CSAF, MSRC API, aggregator | Same or delayed bundle | Manual bundle import |
-| Inventory | Satellite, CMDB, Hyper-V, AAP | Static + occasional sync | Static / offline CMDB extract |
-| Verification | Nessus targeted, Satellite errata, win_updates, agents | Nessus / OpenVAS / agent when available | Manual scanner + imported plugins/results |
-| Remediation | Satellite, MECM, Ansible, cloud update | Limited scripts + manual | Manual only |
-| Ticket | ServiceNow / Jira / etc. | Same or lightweight | Local tracker or delayed sync |
-| Evidence | AAP artifacts, scan IDs, ticket attachments | Same + operator uploads | Signed manifests, media logs, scan exports |
+| Feed / ISM input | RH Security Data / CSAF, MSRC, aggregator | Same or delayed bundle | Manual bundle import |
+| Inventory / CMS | Satellite, CMDB, Hyper-V, AAP | Static + occasional sync | Offline extract |
+| Verification | Nessus targeted, Satellite errata, win_updates, agents | Scanner/agent when available | Manual scanner + imported content |
+| Deployment | Satellite, MECM, Ansible, cloud | Limited scripts + manual | Manual only |
+| Change record | ServiceNow / Jira / etc. | Same or lightweight | Local tracker or delayed sync |
+| Evidence | AAP artifacts, scan IDs, attachments | Operator uploads | Signed manifests, media logs, exports |
 
 ---
 
-## 10. Design Rules (non-negotiable)
+## 11. Design Rules (non-negotiable)
 
-1. **Feed never installs.** Feed only supplies candidates and enriches desired-state review.
-2. **Verification is ubiquitous.** Every gap, every tier, every path ends with actual-state evidence.
-3. **Capability tag drives routing.** No silent assumption of automation.
-4. **Ticket follows the gap.** Open while gap exists; close only after successful re-verification.
-5. **Air-gap is first-class.** Manual scan import and manual remediation are normal paths, not exceptions.
-6. **Desired state is deliberate.** Feeds and scans inform it; they do not unilaterally change it.
-7. **Evidence is durable.** Survives ticket-system reclamation, scanner rebuilds, and air-gap transfers.
+1. **Feed never installs.** Feed and scans inform; Change Enablement authorizes; Deployment realizes.  
+2. **Verification is ubiquitous.** Every path ends with actual-state evidence (Service Validation and Testing).  
+3. **Change type + capability tag together drive the path.** Governance and technical ability are separate axes.  
+4. **Change Authority is explicit.** Including automated authority for true Standard changes.  
+5. **Change record follows the gap.** Open while gap exists; close only after successful re-verification.  
+6. **Emergency still reviews.** Expedite authorization and realization; do not skip registration or post-implementation review inputs.  
+7. **Air-gap is first-class.** Manual verification and realization still satisfy register → authorize → realize → review.  
+8. **Desired state is deliberate.** Continual Improvement and accepted models update it—not raw feed volume.  
+9. **Evidence is durable.** Survives ticket reclamation, scanner rebuilds, and air-gap transfer.
 
 ---
 
-## 11. Lab-to-Enterprise Scaling Path
+## 12. Lab-to-Enterprise Scaling Path
 
 | Stage | Focus |
 |-------|--------|
-| POC | Two hosts (one auto-capable, one manual). Single feed source. One ticket system. Explicit capability tags. |
-| Pilot ring | Small set of hosts per tier. Prove router + re-verify + dynamic ticket. |
-| Production rings | Expand desired-state coverage, add approval policies, multi-feed, multi-scanner. |
-| Air-gap / austere | Formalize bundle process, evidence standards, and delayed ticket sync if required. |
+| POC | Two hosts (one Standard/auto-capable, one Normal/manual). One feed. One change system. Explicit change type + capability tags. |
+| Pilot ring | Prove classification, Change Authority, re-verify, dynamic change record, light PIR. |
+| Production rings | Multi-feed, multi-scanner, schedule integration, Problem linkage for systemic issues. |
+| Air-gap / austere | Bundle process, local authority, evidence standards, delayed sync if required. |
 
 ---
 
-## 12. Relationship to This Repository
+## 13. Relationship to This Repository
 
-This document is the enterprise-oriented reference architecture. The existing lab POC (Satellite + Windows pilot VMs, ServiceNow PDI, mono-repo scaffolding) implements a *subset* of Tier A/B patterns and can later exercise Tier C-style manual paths. Air-gap patterns remain design-only until an isolated environment is in scope.
+This document is the enterprise reference architecture. The lab POC implements a subset of Tier A/B patterns (Satellite, Windows pilot, ServiceNow PDI) and can exercise manual paths. Air-gap remains design-only until an isolated environment is in scope.
 
 ---
 
-*Document version: 1.0 — Enterprise approach with variable patching capability and ubiquitous verification.*
+## 14. References
+
+1. AXELOS, *ITIL Foundation, ITIL 4 Edition* — Service Value System, Service Value Chain, management practice purposes (Change Enablement, Incident Management, Problem Management, Deployment Management, Release Management, Service Validation and Testing, Monitoring and Event Management, Information Security Management, Service Configuration Management, Continual Improvement, etc.).
+2. AXELOS, *ITIL 4 Change Enablement Practice Guide* — purpose statement; change types (Standard, Normal, Emergency); change lifecycle management activities (registration, assessment, authorization, planning, realization control, review and closure); Change Authority; integration with value streams.
+3. AXELOS / PeopleCert, ITIL 4 Practitioner: Change Enablement syllabus and related materials — practice success factors, change models, standard change procedures.
+4. Industry summaries consistent with the above (for cross-check only): ITSM.tools “Change Enablement – Change Management in ITIL 4”; ManageEngine and InvGate explainers on Standard / Normal / Emergency change types; Beyond20 overview of Change Enablement premises (value-stream context, risk-balanced throughput).
+5. Complementary security context: ITIL 4 Information Security Management practice purpose; alignment discussions with vulnerability assessment and security-related emergency changes (e.g., critical patch as classic Emergency change example in multiple ITIL-oriented guides).
+
+*Note: Official AXELOS practice guides are authoritative for wording of purposes and process activities. Secondary sources were used only to confirm widely accepted interpretations of Standard/Normal/Emergency handling and lifecycle steps.*
+
+---
+
+*Document version: 1.1 — Verified against ITIL 4 Change Enablement and related practices; diagrams and router updated for change type, Change Authority, and review/closure.*
